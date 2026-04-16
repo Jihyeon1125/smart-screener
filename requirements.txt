@@ -1,7 +1,7 @@
-yfinance==0.2.54
+yfinance
 finance-datareader
-pykrx==1.0.45
-pandas==2.2.3
-pandas-ta==0.4.71b0
-google-generativeai==0.8.5
-requests==2.32.3
+pykrx
+pandas
+pandas-ta
+google-generativeai
+requests
