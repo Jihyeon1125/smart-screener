@@ -1,3 +1,4 @@
+setuptools
 yfinance
 finance-datareader
 pykrx
@@ -5,3 +6,4 @@ pandas
 pandas-ta
 google-generativeai
 requests
+numpy
