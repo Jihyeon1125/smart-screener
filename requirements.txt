@@ -2,8 +2,8 @@ setuptools
 yfinance
 finance-datareader
 pykrx
-pandas
-pandas-ta
+pandas==2.2.3
+pandas-ta==0.4.67b0
 google-generativeai
 requests
-numpy
+numpy==1.26.4
