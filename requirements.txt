@@ -1,5 +1,5 @@
 yfinance==0.2.54
-FinanceDataReader==0.9.91
+FinanceDataReader
 pykrx==1.0.45
 pandas==2.2.3
 pandas-ta==0.3.14b1
