@@ -1,9 +1,8 @@
 setuptools
-yfinance
+yfinance==0.2.54
 finance-datareader
-pykrx
+pykrx==1.0.45
 pandas==2.2.3
-pandas-ta
 google-generativeai
 requests
-numpy<2.0
+numpy==1.26.4
