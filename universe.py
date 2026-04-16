@@ -1,41 +1,39 @@
 """
-Smart Stock Screener v3.0 — 유니버스 자동 생성
+Smart Stock Screener v3.0
 """
 import pandas as pd
 import yfinance as yf
 from pykrx import stock as pykrx_stock
 from datetime import datetime, timedelta
+from io import StringIO
 import requests
 
 
 def get_us_master():
     print("미국 마스터 유니버스 수집 중...")
     tickers = set()
-
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
-
-    # S&P 500
     try:
         resp = requests.get(
             "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
             headers=headers
         )
-        sp500 = pd.read_html(resp.text)[0]
+        resp.raise_for_status()
+        sp500 = pd.read_html(StringIO(resp.text))[0]
         sp500_tickers = sp500["Symbol"].str.replace(".", "-", regex=False).tolist()
         tickers.update(sp500_tickers)
         print(f"  S&P 500: {len(sp500_tickers)}개")
     except Exception as e:
         print(f"  S&P 500 수집 실패: {e}")
-
-    # NASDAQ 100
     try:
         resp = requests.get(
             "https://en.wikipedia.org/wiki/Nasdaq-100",
             headers=headers
         )
-        tables = pd.read_html(resp.text)
+        resp.raise_for_status()
+        tables = pd.read_html(StringIO(resp.text))
         for table in tables:
             if "Ticker" in table.columns:
                 nasdaq_tickers = table["Ticker"].tolist()
@@ -44,7 +42,6 @@ def get_us_master():
                 break
     except Exception as e:
         print(f"  NASDAQ 100 수집 실패: {e}")
-
     result = sorted(list(tickers))
     print(f"  미국 마스터: 총 {len(result)}개")
     return result
@@ -53,7 +50,6 @@ def get_us_master():
 def get_kr_master():
     print("한국 마스터 유니버스 수집 중...")
     today = datetime.now().strftime("%Y%m%d")
-
     for i in range(7):
         check_date = (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
         try:
@@ -63,40 +59,29 @@ def get_kr_master():
                 break
         except:
             continue
-
     try:
         market_cap_df = pykrx_stock.get_market_cap(today, market="ALL")
         ohlcv_df = pykrx_stock.get_market_ohlcv(today, market="ALL")
-
-        # 컬럼명 확인 후 유연하게 처리
         print(f"  market_cap 컬럼: {list(market_cap_df.columns)}")
         print(f"  ohlcv 컬럼: {list(ohlcv_df.columns)}")
-
-        # 시가총액 컬럼 찾기
         cap_col = None
         for col in market_cap_df.columns:
-            if "시가총액" in col or "market" in col.lower():
+            if "시가총액" in str(col):
                 cap_col = col
                 break
-
-        # 거래량 컬럼 찾기
         vol_col = None
         for col in ohlcv_df.columns:
-            if "거래량" in col or "volume" in col.lower():
+            if "거래량" in str(col):
                 vol_col = col
                 break
-
         if cap_col is None or vol_col is None:
             print(f"  필요한 컬럼을 찾을 수 없습니다.")
             return pd.DataFrame()
-
         merged = market_cap_df.join(ohlcv_df[[vol_col]], how="inner")
-
         filtered = merged[
             (merged[cap_col] >= 300_000_000_000) &
             (merged[vol_col] >= 100_000)
         ]
-
         result = []
         for code in filtered.index:
             try:
@@ -109,11 +94,9 @@ def get_kr_master():
                 })
             except:
                 continue
-
         df = pd.DataFrame(result)
         print(f"  한국 마스터: 총 {len(df)}개")
         return df
-
     except Exception as e:
         print(f"  한국 마스터 수집 실패: {e}")
         import traceback
@@ -160,7 +143,7 @@ def filter_momentum_kr(kr_df, min_stocks=30):
                 continue
             close_col = None
             for col in data.columns:
-                if "종가" in col or "close" in col.lower():
+                if "종가" in str(col):
                     close_col = col
                     break
             if close_col is None:
