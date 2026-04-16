@@ -3,9 +3,34 @@ Smart Stock Screener v3.0 — 데이터 수집 + 기술적 지표 계산
 """
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 from pykrx import stock as pykrx_stock
 from datetime import datetime, timedelta
+import numpy as np
+
+
+def calc_rsi(close, length=14):
+    delta = close.diff()
+    gain = delta.where(delta > 0, 0).rolling(length).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(length).mean()
+    rs = gain / loss
+    rs = rs.replace([np.inf, -np.inf], 0).fillna(0)
+    return 100 - (100 / (1 + rs))
+
+
+def calc_macd(close, fast=12, slow=26, signal=9):
+    ema_fast = close.ewm(span=fast).mean()
+    ema_slow = close.ewm(span=slow).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal).mean()
+    return macd_line, signal_line
+
+
+def calc_bbands(close, length=20, std=2):
+    mid = close.rolling(length).mean()
+    bb_std = close.rolling(length).std()
+    upper = mid + std * bb_std
+    lower = mid - std * bb_std
+    return upper, mid, lower
 
 
 def collect_us_stock(ticker):
@@ -128,63 +153,60 @@ def calculate_technicals(daily, weekly):
     low_d = daily["Low"]
     current_price = close_d.iloc[-1]
 
-    # RSI (14)
+    # RSI
     try:
-        rsi_series = ta.rsi(close_d, length=14)
+        rsi_series = calc_rsi(close_d, 14)
         result["rsi_daily"] = round(rsi_series.iloc[-1], 2)
     except:
         result["rsi_daily"] = 50.0
 
-    # MACD (12, 26, 9)
+    # MACD
     try:
-        macd_df = ta.macd(close_d, fast=12, slow=26, signal=9)
-        macd_line = macd_df.iloc[-1, 0]
-        signal_line = macd_df.iloc[-1, 2]
-        result["macd_value"] = round(macd_line, 4)
-        result["macd_signal"] = round(signal_line, 4)
-        result["macd_golden"] = macd_line > signal_line
-        result["macd_above_zero"] = macd_line > 0
+        macd_line, signal_line = calc_macd(close_d, 12, 26, 9)
+        ml = macd_line.iloc[-1]
+        sl = signal_line.iloc[-1]
+        result["macd_value"] = round(ml, 4)
+        result["macd_signal"] = round(sl, 4)
+        result["macd_golden"] = ml > sl
+        result["macd_above_zero"] = ml > 0
     except:
         result["macd_value"] = 0
         result["macd_signal"] = 0
         result["macd_golden"] = False
         result["macd_above_zero"] = False
 
-    # Bollinger Bands (20, 2)
+    # Bollinger Bands
     try:
-        bb = ta.bbands(close_d, length=20, std=2)
-        bb_upper = bb.iloc[-1, 0]
-        bb_mid = bb.iloc[-1, 1]
-        bb_lower = bb.iloc[-1, 2]
-        result["bb_upper"] = round(bb_upper, 2)
-        result["bb_mid"] = round(bb_mid, 2)
-        result["bb_lower"] = round(bb_lower, 2)
-        if current_price > bb_upper:
+        bb_upper, bb_mid, bb_lower = calc_bbands(close_d, 20, 2)
+        bu = bb_upper.iloc[-1]
+        bm = bb_mid.iloc[-1]
+        bl = bb_lower.iloc[-1]
+        result["bb_upper"] = round(bu, 2)
+        result["bb_mid"] = round(bm, 2)
+        result["bb_lower"] = round(bl, 2)
+        if current_price > bu:
             result["bb_position"] = "above_upper"
-        elif current_price > bb_mid:
+        elif current_price > bm:
             result["bb_position"] = "above_mid"
-        elif current_price > bb_lower:
+        elif current_price > bl:
             result["bb_position"] = "below_mid"
         else:
             result["bb_position"] = "below_lower"
     except:
         result["bb_position"] = "unknown"
 
-    # Moving Averages (20, 50, 200)
+    # Moving Averages
     try:
-        ma20 = ta.sma(close_d, length=20).iloc[-1]
-        ma50 = ta.sma(close_d, length=50).iloc[-1]
-        ma200_series = ta.sma(close_d, length=200)
-        if len(ma200_series.dropna()) > 0:
-            ma200 = ma200_series.iloc[-1]
-        else:
-            ma200 = 0
+        ma20 = close_d.rolling(20).mean().iloc[-1]
+        ma50 = close_d.rolling(50).mean().iloc[-1]
+        ma200_series = close_d.rolling(200).mean()
+        ma200 = ma200_series.iloc[-1] if not pd.isna(ma200_series.iloc[-1]) else 0
         result["ma20"] = round(ma20, 2)
         result["ma50"] = round(ma50, 2)
         result["ma200"] = round(ma200, 2) if ma200 else 0
         if ma200 and ma20 > ma50 > ma200:
-            ma20_prev = ta.sma(close_d, length=20).iloc[-5]
-            ma50_prev = ta.sma(close_d, length=50).iloc[-5]
+            ma20_prev = close_d.rolling(20).mean().iloc[-5]
+            ma50_prev = close_d.rolling(50).mean().iloc[-5]
             if ma20 > ma20_prev and ma50 > ma50_prev:
                 result["ma_alignment"] = "perfect"
             else:
@@ -206,17 +228,17 @@ def calculate_technicals(daily, weekly):
         kijun = (high_w.rolling(26).max() + low_w.rolling(26).min()) / 2
         senkou_a = ((tenkan + kijun) / 2).shift(26)
         senkou_b = ((high_w.rolling(52).max() + low_w.rolling(52).min()) / 2).shift(26)
-        current_senkou_a = senkou_a.iloc[-1] if not pd.isna(senkou_a.iloc[-1]) else 0
-        current_senkou_b = senkou_b.iloc[-1] if not pd.isna(senkou_b.iloc[-1]) else 0
-        current_tenkan = tenkan.iloc[-1] if not pd.isna(tenkan.iloc[-1]) else 0
-        current_kijun = kijun.iloc[-1] if not pd.isna(kijun.iloc[-1]) else 0
-        cloud_top = max(current_senkou_a, current_senkou_b)
-        cloud_bottom = min(current_senkou_a, current_senkou_b)
-        result["ichimoku_tenkan"] = round(current_tenkan, 2)
-        result["ichimoku_kijun"] = round(current_kijun, 2)
+        cs_a = senkou_a.iloc[-1] if not pd.isna(senkou_a.iloc[-1]) else 0
+        cs_b = senkou_b.iloc[-1] if not pd.isna(senkou_b.iloc[-1]) else 0
+        ct = tenkan.iloc[-1] if not pd.isna(tenkan.iloc[-1]) else 0
+        ck = kijun.iloc[-1] if not pd.isna(kijun.iloc[-1]) else 0
+        cloud_top = max(cs_a, cs_b)
+        cloud_bottom = min(cs_a, cs_b)
+        result["ichimoku_tenkan"] = round(ct, 2)
+        result["ichimoku_kijun"] = round(ck, 2)
         result["ichimoku_cloud_top"] = round(cloud_top, 2)
         result["ichimoku_cloud_bottom"] = round(cloud_bottom, 2)
-        result["tenkan_above_kijun"] = current_tenkan > current_kijun
+        result["tenkan_above_kijun"] = ct > ck
         if weekly_price > cloud_top:
             result["ichimoku_position"] = "above"
         elif weekly_price > cloud_bottom:
