@@ -50,68 +50,59 @@ def get_us_master():
 def get_kr_master():
     print("한국 마스터 유니버스 수집 중...")
     try:
-        otp_url = "http://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd"
-        otp_params = {
-            "locale": "ko_KR",
-            "mktId": "ALL",
-            "trdDd": datetime.now().strftime("%Y%m%d"),
-            "money": "1",
-            "csvxls_is498": "false",
-            "name": "fileDown",
-            "url": "dbms/MDC/STAT/standard/MDCSTAT01501"
-        }
+        url = "http://data.krx.co.kr/comm/bldAttend498/getJsonData.cmd"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101"
+            "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101",
+            "Content-Type": "application/x-www-form-urlencoded"
         }
-        otp_resp = requests.post(otp_url, data=otp_params, headers=headers)
-        otp = otp_resp.text
-        down_url = "http://data.krx.co.kr/comm/fileDn/download_csv/download.cmd"
-        down_resp = requests.post(
-            down_url,
-            data={"code": otp},
-            headers=headers
-        )
-        df = pd.read_csv(StringIO(down_resp.text), encoding="euc-kr")
-        print(f"  KRX 원본 컬럼: {list(df.columns)}")
-        print(f"  KRX 원본 행수: {len(df)}")
-        # 컬럼명 유연하게 찾기
-        code_col = None
-        name_col = None
-        cap_col = None
-        vol_col = None
-        for col in df.columns:
-            col_str = str(col)
-            if "종목코드" in col_str or "코드" in col_str:
-                code_col = col
-            elif "종목명" in col_str or "종목" in col_str and name_col is None:
-                name_col = col
-            elif "시가총액" in col_str:
-                cap_col = col
-            elif "거래량" in col_str and vol_col is None:
-                vol_col = col
-        print(f"  매핑: code={code_col}, name={name_col}, cap={cap_col}, vol={vol_col}")
-        if code_col is None or name_col is None or cap_col is None:
-            print("  필요한 컬럼을 찾을 수 없습니다.")
-            print(f"  전체 컬럼: {list(df.columns)}")
-            return pd.DataFrame()
-        # 시가총액 3000억 이상, 거래량 10만 이상 필터
-        df[cap_col] = pd.to_numeric(df[cap_col].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
-        if vol_col:
-            df[vol_col] = pd.to_numeric(df[vol_col].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
-            filtered = df[(df[cap_col] >= 300_000_000_000) & (df[vol_col] >= 100_000)]
+        # 최근 7일 중 거래일 찾기
+        for i in range(7):
+            check_date = (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
+            params = {
+                "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
+                "locale": "ko_KR",
+                "mktId": "ALL",
+                "trdDd": check_date,
+                "share": "1",
+                "money": "1",
+                "csvxls_isNo": "false",
+            }
+            resp = requests.post(url, data=params, headers=headers)
+            try:
+                data = resp.json()
+                if "OutBlock_1" in data and len(data["OutBlock_1"]) > 0:
+                    print(f"  거래일: {check_date}")
+                    break
+            except:
+                continue
         else:
-            filtered = df[df[cap_col] >= 300_000_000_000]
+            print("  KRX 데이터를 가져올 수 없습니다.")
+            return pd.DataFrame()
+        rows = data["OutBlock_1"]
+        print(f"  KRX 원본: {len(rows)}개")
+        if len(rows) > 0:
+            print(f"  샘플 키: {list(rows[0].keys())}")
         result = []
-        for _, row in filtered.iterrows():
-            code = str(row[code_col]).zfill(6)
-            result.append({
-                "code": code,
-                "name": row[name_col],
-                "market_cap": row[cap_col],
-            })
+        for row in rows:
+            try:
+                code = str(row.get("ISU_SRT_CD", "")).strip()
+                name = str(row.get("ISU_ABBRV", "")).strip()
+                cap_str = str(row.get("MKTCAP", "0")).replace(",", "")
+                vol_str = str(row.get("ACC_TRDVOL", "0")).replace(",", "")
+                cap = int(float(cap_str)) if cap_str else 0
+                vol = int(float(vol_str)) if vol_str else 0
+                if len(code) == 6 and code.isdigit():
+                    if cap >= 300_000_000_000 and vol >= 100_000:
+                        result.append({
+                            "code": code,
+                            "name": name,
+                            "market_cap": cap,
+                        })
+            except:
+                continue
         result_df = pd.DataFrame(result)
-        print(f"  한국 마스터: 총 {len(result_df)}개")
+        print(f"  한국 마스터: 총 {len(result_df)}개 (시총 3000억+, 거래량 10만+)")
         return result_df
     except Exception as e:
         print(f"  한국 마스터 수집 실패: {e}")
