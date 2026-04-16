@@ -3,10 +3,10 @@ Smart Stock Screener v3.0
 """
 import pandas as pd
 import yfinance as yf
-from pykrx import stock as pykrx_stock
 from datetime import datetime, timedelta
 from io import StringIO
 import requests
+import json
 
 
 def get_us_master():
@@ -49,54 +49,70 @@ def get_us_master():
 
 def get_kr_master():
     print("한국 마스터 유니버스 수집 중...")
-    today = datetime.now().strftime("%Y%m%d")
-    for i in range(7):
-        check_date = (datetime.now() - timedelta(days=i)).strftime("%Y%m%d")
-        try:
-            test = pykrx_stock.get_market_cap(check_date, market="ALL")
-            if len(test) > 0:
-                today = check_date
-                break
-        except:
-            continue
     try:
-        market_cap_df = pykrx_stock.get_market_cap(today, market="ALL")
-        ohlcv_df = pykrx_stock.get_market_ohlcv(today, market="ALL")
-        print(f"  market_cap 컬럼: {list(market_cap_df.columns)}")
-        print(f"  ohlcv 컬럼: {list(ohlcv_df.columns)}")
+        otp_url = "http://data.krx.co.kr/comm/fileDn/GenerateOTP/generate.cmd"
+        otp_params = {
+            "locale": "ko_KR",
+            "mktId": "ALL",
+            "trdDd": datetime.now().strftime("%Y%m%d"),
+            "money": "1",
+            "csvxls_is498": "false",
+            "name": "fileDown",
+            "url": "dbms/MDC/STAT/standard/MDCSTAT01501"
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "http://data.krx.co.kr/contents/MDC/MDI/mdiLoader/index.cmd?menuId=MDC0201020101"
+        }
+        otp_resp = requests.post(otp_url, data=otp_params, headers=headers)
+        otp = otp_resp.text
+        down_url = "http://data.krx.co.kr/comm/fileDn/download_csv/download.cmd"
+        down_resp = requests.post(
+            down_url,
+            data={"code": otp},
+            headers=headers
+        )
+        df = pd.read_csv(StringIO(down_resp.text), encoding="euc-kr")
+        print(f"  KRX 원본 컬럼: {list(df.columns)}")
+        print(f"  KRX 원본 행수: {len(df)}")
+        # 컬럼명 유연하게 찾기
+        code_col = None
+        name_col = None
         cap_col = None
-        for col in market_cap_df.columns:
-            if "시가총액" in str(col):
-                cap_col = col
-                break
         vol_col = None
-        for col in ohlcv_df.columns:
-            if "거래량" in str(col):
+        for col in df.columns:
+            col_str = str(col)
+            if "종목코드" in col_str or "코드" in col_str:
+                code_col = col
+            elif "종목명" in col_str or "종목" in col_str and name_col is None:
+                name_col = col
+            elif "시가총액" in col_str:
+                cap_col = col
+            elif "거래량" in col_str and vol_col is None:
                 vol_col = col
-                break
-        if cap_col is None or vol_col is None:
-            print(f"  필요한 컬럼을 찾을 수 없습니다.")
+        print(f"  매핑: code={code_col}, name={name_col}, cap={cap_col}, vol={vol_col}")
+        if code_col is None or name_col is None or cap_col is None:
+            print("  필요한 컬럼을 찾을 수 없습니다.")
+            print(f"  전체 컬럼: {list(df.columns)}")
             return pd.DataFrame()
-        merged = market_cap_df.join(ohlcv_df[[vol_col]], how="inner")
-        filtered = merged[
-            (merged[cap_col] >= 300_000_000_000) &
-            (merged[vol_col] >= 100_000)
-        ]
+        # 시가총액 3000억 이상, 거래량 10만 이상 필터
+        df[cap_col] = pd.to_numeric(df[cap_col].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
+        if vol_col:
+            df[vol_col] = pd.to_numeric(df[vol_col].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
+            filtered = df[(df[cap_col] >= 300_000_000_000) & (df[vol_col] >= 100_000)]
+        else:
+            filtered = df[df[cap_col] >= 300_000_000_000]
         result = []
-        for code in filtered.index:
-            try:
-                name = pykrx_stock.get_market_ticker_name(code)
-                result.append({
-                    "code": code,
-                    "name": name,
-                    "market_cap": filtered.loc[code, cap_col],
-                    "volume": filtered.loc[code, vol_col],
-                })
-            except:
-                continue
-        df = pd.DataFrame(result)
-        print(f"  한국 마스터: 총 {len(df)}개")
-        return df
+        for _, row in filtered.iterrows():
+            code = str(row[code_col]).zfill(6)
+            result.append({
+                "code": code,
+                "name": row[name_col],
+                "market_cap": row[cap_col],
+            })
+        result_df = pd.DataFrame(result)
+        print(f"  한국 마스터: 총 {len(result_df)}개")
+        return result_df
     except Exception as e:
         print(f"  한국 마스터 수집 실패: {e}")
         import traceback
@@ -107,6 +123,7 @@ def get_kr_master():
 def filter_momentum_us(tickers, min_stocks=50):
     print(f"미국 모멘텀 필터링 중... ({len(tickers)}개 대상)")
     passed = []
+    errors = 0
     for i, ticker in enumerate(tickers):
         try:
             data = yf.Ticker(ticker).history(period="6mo", interval="1d")
@@ -122,33 +139,31 @@ def filter_momentum_us(tickers, min_stocks=50):
             rsi = 100 - (100 / (1 + rs))
             if ma20 > ma50 and rsi > 50:
                 passed.append(ticker)
-            if (i + 1) % 50 == 0:
-                print(f"  진행: {i+1}/{len(tickers)} ({len(passed)}개 통과)")
-        except Exception:
-            continue
-    print(f"  미국 모멘텀 통과: {len(passed)}개")
+        except Exception as e:
+            errors += 1
+            if errors <= 3:
+                print(f"  오류 샘플: {ticker} -> {e}")
+        if (i + 1) % 50 == 0:
+            print(f"  진행: {i+1}/{len(tickers)} (통과: {len(passed)}개, 오류: {errors}개)")
+    print(f"  미국 모멘텀 통과: {len(passed)}개 (오류: {errors}개)")
     return passed
 
 
 def filter_momentum_kr(kr_df, min_stocks=30):
     print(f"한국 모멘텀 필터링 중... ({len(kr_df)}개 대상)")
     passed = []
-    end_date = datetime.now().strftime("%Y%m%d")
-    start_date = (datetime.now() - timedelta(days=180)).strftime("%Y%m%d")
+    errors = 0
     for i, row in kr_df.iterrows():
         try:
             code = row["code"]
-            data = pykrx_stock.get_market_ohlcv(start_date, end_date, code)
+            yf_ticker = yf.Ticker(f"{code}.KS")
+            data = yf_ticker.history(period="6mo", interval="1d")
+            if len(data) < 50:
+                yf_ticker = yf.Ticker(f"{code}.KQ")
+                data = yf_ticker.history(period="6mo", interval="1d")
             if len(data) < 50:
                 continue
-            close_col = None
-            for col in data.columns:
-                if "종가" in str(col):
-                    close_col = col
-                    break
-            if close_col is None:
-                continue
-            close = data[close_col]
+            close = data["Close"]
             ma20 = close.rolling(20).mean().iloc[-1]
             ma50 = close.rolling(50).mean().iloc[-1]
             delta = close.diff()
@@ -162,11 +177,13 @@ def filter_momentum_kr(kr_df, min_stocks=30):
                     "name": row["name"],
                     "market_cap": row["market_cap"],
                 })
-            if (i + 1) % 30 == 0:
-                print(f"  진행: {i+1}/{len(kr_df)} ({len(passed)}개 통과)")
-        except Exception:
-            continue
-    print(f"  한국 모멘텀 통과: {len(passed)}개")
+        except Exception as e:
+            errors += 1
+            if errors <= 3:
+                print(f"  오류 샘플: {code} -> {e}")
+        if (i + 1) % 30 == 0:
+            print(f"  진행: {i+1}/{len(kr_df)} (통과: {len(passed)}개)")
+    print(f"  한국 모멘텀 통과: {len(passed)}개 (오류: {errors}개)")
     return passed
 
 
