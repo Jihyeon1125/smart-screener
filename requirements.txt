@@ -1,0 +1,8 @@
+yfinance==0.2.54
+FinanceDataReader==0.9.91
+pykrx==1.0.45
+pandas==2.2.3
+pandas-ta==0.3.14b1
+google-generativeai==0.8.5
+requests==2.32.3
+numpy==1.26.4
