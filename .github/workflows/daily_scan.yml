@@ -1,26 +1,28 @@
-name: Daily Stock Screening
+name: Daily Stock Screener
+
 on:
   schedule:
-    - cron: '0 23 * * 1-5'
+    - cron: '0 14 * * 1-5'
   workflow_dispatch:
+
 jobs:
-  screening:
+  screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    timeout-minutes: 45
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install setuptools==75.8.2 wheel
+          pip install setuptools wheel
           pip install -r requirements.txt
+
       - name: Run python main.py
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
