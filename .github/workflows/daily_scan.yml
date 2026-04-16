@@ -22,4 +22,9 @@ jobs:
           pip install setuptools==75.8.2 wheel
           pip install -r requirements.txt
       - name: Run python main.py
-        run: python test_modules.py
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+        run: python main.py
