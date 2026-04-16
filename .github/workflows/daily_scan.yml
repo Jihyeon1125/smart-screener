@@ -21,4 +21,5 @@ jobs:
           pip install --upgrade pip
           pip install setuptools==75.8.2 wheel
           pip install -r requirements.txt
-      - run: python main.py
+      - name: Run python main.py
+        run: python test_modules.py
